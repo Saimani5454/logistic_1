@@ -1,49 +1,159 @@
+# app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
+import os
+import joblib
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, roc_auc_score, roc_curve
+)
 
-# Load the trained model and scaler
-with open("logistic_model.pkl", "rb") as f:
-    model, scaler = pickle.load(f)
+# Load Data
+train_df = pd.read_csv("Titanic_train.csv")
+test_df = pd.read_csv("Titanic_test.csv")
+
+# Preprocessing
+def preprocess_data(df):
+    df = df.copy()
+    df['Embarked'].fillna(df['Embarked'].mode()[0], inplace=True)
+    df['Fare'].fillna(df['Fare'].median(), inplace=True)
+    df['FamilySize'] = df.get('SibSp', 0) + df.get('Parch', 0) + 1
+    df['IsAlone'] = (df['FamilySize'] == 1).astype(int)
+    
+    drop_cols = [col for col in ['PassengerId', 'Name', 'Ticket', 'Cabin'] if col in df.columns]
+    df.drop(columns=drop_cols, inplace=True)
+    
+    return df
+
+train_df_processed = preprocess_data(train_df.copy())
+
+# Feature Engineering
+X = train_df_processed.drop('Survived', axis=1)
+y = train_df_processed['Survived']
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+numerical_features = ['Age', 'Fare', 'SibSp', 'Parch', 'FamilySize', 'IsAlone']
+categorical_features = ['Pclass', 'Sex', 'Embarked']
+
+numerical_pipeline = Pipeline([
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', StandardScaler())
+])
+
+categorical_pipeline = Pipeline([
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
+
+preprocessor = ColumnTransformer([
+    ('num', numerical_pipeline, numerical_features),
+    ('cat', categorical_pipeline, categorical_features)
+])
+
+model_pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    ('classifier', LogisticRegression(solver='liblinear', random_state=42, max_iter=1000))
+])
+
+# Train & Save Model if not already saved
+model_path = 'logistic_regression_model_pipeline.pkl'
+if not os.path.exists(model_path):
+    model_pipeline.fit(X_train, y_train)
+    joblib.dump(model_pipeline, model_path)
+else:
+    model_pipeline = joblib.load(model_path)
+
+# Evaluate Model
+y_pred = model_pipeline.predict(X_test)
+y_pred_proba = model_pipeline.predict_proba(X_test)[:, 1]
+
+metrics = {
+    "accuracy": accuracy_score(y_test, y_pred),
+    "precision": precision_score(y_test, y_pred),
+    "recall": recall_score(y_test, y_pred),
+    "f1": f1_score(y_test, y_pred),
+    "roc_auc": roc_auc_score(y_test, y_pred_proba),
+}
 
 # Streamlit UI
-st.set_page_config(page_title="Titanic Survival Predictor", layout="centered")
+st.set_page_config(page_title="Titanic Survival Predictor (Logistic Regression)", page_icon="🚢")
 st.title("🚢 Titanic Survival Predictor")
-st.caption("Enter passenger information to predict survival odds.")
+st.markdown("Enter passenger details to predict their survival probability using a Logistic Regression model.")
 
-with st.form("predict_form"):
-    pclass = st.selectbox("Passenger Class", [1, 2, 3], index=2)
-    sex = st.selectbox("Sex", ["male", "female"])
-    age = st.slider("Age", 0, 80, 29)
-    sibsp = st.number_input("Siblings/Spouses aboard", 0, 10, 0)
-    parch = st.number_input("Parents/Children aboard", 0, 10, 0)
-    fare = st.slider("Fare", 0.0, 600.0, 32.0)
-    embarked = st.selectbox("Port of Embarkation", ["S", "C", "Q"])
+st.header("Model Performance Metrics (on Test Set)")
+cols = st.columns(5)
+for col, (label, value) in zip(cols, metrics.items()):
+    col.metric(label.capitalize(), f"{value:.2f}")
 
-    submitted = st.form_submit_button("Predict")
+st.markdown("---")
+st.header("Predict Survival for a New Passenger")
 
-if submitted:
-    # Manual one-hot encoding
-    sex_male = 1 if sex == "male" else 0
-    embarked_Q = 1 if embarked == "Q" else 0
-    embarked_S = 1 if embarked == "S" else 0
+# Input Widgets
+pclass_display = st.selectbox("Passenger Class", options=['1st Class', '2nd Class', '3rd Class'], index=2)
+pclass = {'1st Class': 1, '2nd Class': 2, '3rd Class': 3}[pclass_display]
+sex = st.radio("Sex", options=['Male', 'Female']).lower()
+age = st.slider("Age", 0, 80, 30)
+sibsp = st.slider("Siblings/Spouses Aboard (SibSp)", 0, 8, 0)
+parch = st.slider("Parents/Children Aboard (Parch)", 0, 6, 0)
+fare = st.number_input("Ticket Fare", 0.0, 500.0, 30.0, step=5.0)
+embarked = st.selectbox("Port of Embarkation", ['Southampton', 'Cherbourg', 'Queenstown'], index=0)
+embarked_code = {'Southampton': 'S', 'Cherbourg': 'C', 'Queenstown': 'Q'}[embarked]
 
-    features = pd.DataFrame([[
-        pclass, age, sibsp, parch, fare,
-        sex_male, embarked_Q, embarked_S
-    ]], columns=[
-        'Pclass', 'Age', 'SibSp', 'Parch', 'Fare',
-        'Sex_male', 'Embarked_Q', 'Embarked_S'
-    ])
+# Inference
+input_data = pd.DataFrame([{
+    'Pclass': pclass,
+    'Sex': sex,
+    'Age': age,
+    'SibSp': sibsp,
+    'Parch': parch,
+    'Fare': fare,
+    'Embarked': embarked_code
+}])
 
-    features_scaled = scaler.transform(features)
-    prob = model.predict_proba(features_scaled)[0][1]
-    prediction = model.predict(features_scaled)[0]
+if st.button("Predict Survival"):
+    input_data_processed = preprocess_data(input_data.copy())
+    proba = model_pipeline.predict_proba(input_data_processed)[0, 1]
+    prediction = model_pipeline.predict(input_data_processed)[0]
 
-    st.subheader("🧠 Prediction Result")
-    st.write(f"**Survival Probability:** {prob:.2%}")
+    st.subheader("Prediction Result:")
     if prediction == 1:
-        st.success("🎉 Passenger likely **survived**.")
+        st.success(f"**Survived!** 🎉 (Probability: {proba*100:.2f}%)")
     else:
-        st.error("💀 Passenger likely **did not survive**.")
+        st.error(f"**Did Not Survive.** 😔 (Probability: {(1-proba)*100:.2f}%)")
+
+    st.markdown(f"**Survival Probability:** `{proba*100:.2f}%`")
+
+    st.subheader("Model Insights:")
+    st.info("""
+    - **Sex:** Females and children had higher survival chances.
+    - **Class:** 1st class passengers were prioritized.
+    - **Family Size:** Being alone or having a very large family lowered chances.
+    - **Fare & Embarkation:** Often reflected social status and lifeboat access.
+    """)
+
+# ROC Curve
+st.header("Receiver Operating Characteristic (ROC) Curve")
+fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+fig, ax = plt.subplots(figsize=(8, 6))
+ax.plot(fpr, tpr, label=f'Logistic Regression (AUC = {metrics["roc_auc"]:.2f})')
+ax.plot([0, 1], [0, 1], 'k--', label='Random Guess')
+ax.set_xlabel('False Positive Rate')
+ax.set_ylabel('True Positive Rate')
+ax.set_title('ROC Curve')
+ax.legend(loc='lower right')
+ax.grid(True)
+st.pyplot(fig)
+
+st.markdown("---")
+st.caption("Developed with Streamlit and scikit-learn.")
