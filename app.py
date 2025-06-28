@@ -113,4 +113,27 @@ if st.button("Predict Survival"):
     proba = model_pipeline.predict_proba(input_data_processed)[0, 1]
     prediction = model_pipeline.predict(input_data_processed)[0]
 
-    st.subheader("Prediction Result:
+    st.subheader("Prediction Result:")
+    if prediction == 1:
+        st.success(f"**Survived!** 🎉 (Probability: {proba*100:.2f}%)")
+    else:
+        st.error(f"**Did Not Survive.** 😔 (Probability: {(1-proba)*100:.2f}%)")
+
+    st.markdown(f"**Survival Probability:** `{proba*100:.2f}%`")
+
+    st.subheader("Model Insights:")
+    st.info("""
+    - **Sex:** Females and children had higher survival chances.
+    - **Class:** 1st class passengers were prioritized.
+    - **Family Size:** Being alone or having a very large family lowered chances.
+    - **Fare & Embarkation:** Often reflected social status and lifeboat access.
+    """)
+
+# ROC Curve
+st.header("ROC Curve")
+fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+roc_df = pd.DataFrame({'False Positive Rate': fpr, 'True Positive Rate': tpr})
+st.line_chart(roc_df.set_index('False Positive Rate'))
+
+st.markdown("---")
+st.caption("Developed with Streamlit and scikit-learn.")
