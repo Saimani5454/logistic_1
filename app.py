@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -21,17 +21,17 @@ def preprocess_data(df):
     df = df.copy()
     df['Embarked'].fillna(df['Embarked'].mode()[0], inplace=True)
     df['Fare'].fillna(df['Fare'].median(), inplace=True)
-    df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
+    df['FamilySize'] = df.get('SibSp', 0) + df.get('Parch', 0) + 1
     df['IsAlone'] = (df['FamilySize'] == 1).astype(int)
-    df.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True, errors='ignore')
+    drop_cols = [col for col in ['PassengerId', 'Name', 'Ticket', 'Cabin'] if col in df.columns]
+    df.drop(columns=drop_cols, inplace=True)
     return df
 
-train_df = preprocess_data(train_df)
+train_df_processed = preprocess_data(train_df.copy())
 
-# Feature Engineering
-X = train_df.drop('Survived', axis=1)
-y = train_df['Survived']
-
+# Features
+X = train_df_processed.drop('Survived', axis=1)
+y = train_df_processed['Survived']
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
@@ -56,7 +56,7 @@ preprocessor = ColumnTransformer([
 
 model_pipeline = Pipeline([
     ('preprocessor', preprocessor),
-    ('classifier', LogisticRegression(solver='liblinear', max_iter=1000))
+    ('classifier', LogisticRegression(solver='liblinear', random_state=42, max_iter=1000))
 ])
 
 model_pipeline.fit(X_train, y_train)
@@ -74,60 +74,43 @@ metrics = {
 }
 
 # Streamlit UI
-st.set_page_config(page_title="Titanic Survival Predictor (No joblib)", page_icon="🚢")
-st.title("🚢 Titanic Survival Predictor (No joblib)")
+st.set_page_config(page_title="Titanic Survival Predictor (Logistic Regression)", page_icon="🚢")
+st.title("🚢 Titanic Survival Predictor")
+st.markdown("Enter passenger details to predict their survival probability using a Logistic Regression model.")
 
-st.header("Model Performance")
+st.header("Model Performance Metrics (on Test Set)")
 cols = st.columns(5)
 for col, (label, value) in zip(cols, metrics.items()):
     col.metric(label.capitalize(), f"{value:.2f}")
 
 st.markdown("---")
-st.header("Predict Survival")
+st.header("Predict Survival for a New Passenger")
 
 # Input Widgets
-pclass_display = st.selectbox("Passenger Class", ['1st Class', '2nd Class', '3rd Class'], index=2)
+pclass_display = st.selectbox("Passenger Class", options=['1st Class', '2nd Class', '3rd Class'], index=2)
 pclass = {'1st Class': 1, '2nd Class': 2, '3rd Class': 3}[pclass_display]
-sex = st.radio("Sex", ['Male', 'Female']).lower()
+sex = st.radio("Sex", options=['Male', 'Female']).lower()
 age = st.slider("Age", 0, 80, 30)
-sibsp = st.slider("Siblings/Spouses Aboard", 0, 8, 0)
-parch = st.slider("Parents/Children Aboard", 0, 6, 0)
-fare = st.number_input("Fare", 0.0, 500.0, 30.0, step=5.0)
-embarked_display = st.selectbox("Embarked", ['Southampton', 'Cherbourg', 'Queenstown'])
-embarked = {'Southampton': 'S', 'Cherbourg': 'C', 'Queenstown': 'Q'}[embarked_display]
+sibsp = st.slider("Siblings/Spouses Aboard (SibSp)", 0, 8, 0)
+parch = st.slider("Parents/Children Aboard (Parch)", 0, 6, 0)
+fare = st.number_input("Ticket Fare", 0.0, 500.0, 30.0, step=5.0)
+embarked = st.selectbox("Port of Embarkation", ['Southampton', 'Cherbourg', 'Queenstown'], index=0)
+embarked_code = {'Southampton': 'S', 'Cherbourg': 'C', 'Queenstown': 'Q'}[embarked]
 
-input_df = pd.DataFrame([{
+# Inference
+input_data = pd.DataFrame([{
     'Pclass': pclass,
     'Sex': sex,
     'Age': age,
     'SibSp': sibsp,
     'Parch': parch,
     'Fare': fare,
-    'Embarked': embarked
+    'Embarked': embarked_code
 }])
-input_df = preprocess_data(input_df)
 
 if st.button("Predict Survival"):
-    proba = model_pipeline.predict_proba(input_df)[0, 1]
-    pred = model_pipeline.predict(input_df)[0]
+    input_data_processed = preprocess_data(input_data.copy())
+    proba = model_pipeline.predict_proba(input_data_processed)[0, 1]
+    prediction = model_pipeline.predict(input_data_processed)[0]
 
-    st.subheader("Prediction Result")
-    if pred == 1:
-        st.success(f"✅ Survived! (Probability: {proba*100:.2f}%)")
-    else:
-        st.error(f"❌ Did Not Survive (Probability: {(1-proba)*100:.2f}%)")
-
-    st.markdown(f"**Probability of Survival:** `{proba*100:.2f}%`")
-
-# ROC Curve
-fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
-fig, ax = plt.subplots()
-ax.plot(fpr, tpr, label=f"AUC = {metrics['roc_auc']:.2f}")
-ax.plot([0, 1], [0, 1], 'k--')
-ax.set_xlabel('False Positive Rate')
-ax.set_ylabel('True Positive Rate')
-ax.set_title('ROC Curve')
-ax.legend(loc='lower right')
-st.pyplot(fig)
-
-st.caption("No joblib used. Model retrained each run.")
+    st.subheader("Prediction Result:
